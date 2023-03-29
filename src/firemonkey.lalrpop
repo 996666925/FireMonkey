@@ -1,0 +1,146 @@
+use crate::ast::*;
+
+
+// lalrpop 里的约定
+grammar;
+
+// 约束 lexer 的行为
+match {
+  // 跳过空白符和注释
+  r"\s*" => {},
+  r"//[^\n\r]*[\n\r]*" => {},
+  // 剩下的情况采用默认方式处理
+  _
+}
+
+pub CompUnit: CompUnit = <items: (GlobalItem*)> => CompUnit { <> };
+
+GlobalItem:GlobalItem={
+  <stmt:Stmt>=>GlobalItem::Decl(<>),
+  <FuncDef:FuncDef>=>GlobalItem::FuncDef(<>),
+}
+
+FuncDef: FuncDef = {
+  <func_type: BType> <ident: Ident> "(" ")" <block: Block> => {
+    FuncDef { func_type,ident,params:Vec::new(),block }
+  },
+  <func_type: BType> <ident: Ident> "(" <param: FuncParam> <mut params: ("," <FuncParam>)*> ")" <block: Block> => {
+    params.insert(0,param);
+    FuncDef { func_type,ident,params,block }
+  }
+}
+
+FuncParam: FuncParam = {
+  <btype:BType> <id: Ident>  => {
+    FuncParam { <> }
+  },
+}
+
+Block: Block = "{" <items: (Stmt)*> "}" => Block { <> };
+
+Stmt:Stmt={
+  <stmt:MatchedStmt>=><>,
+  <stmt:OpenStmt>=><>
+}
+
+MatchedStmt: Stmt ={
+  "return" <exp: MulExp> ";"=> Stmt::Return(<>),
+  <rval:RVal> "=" <exp:ValValue>";" =>Stmt::Assign(Assign{<>}),
+  <btype: BType> <lval:LVal> <exp:("=" <ValValue> )?>";" =>Stmt::Decl(Decl{<>}),
+  <block :Block> =>Stmt::Block ( <> ),
+  "if" "(" <cond:MulExp> ")" <then:MatchedStmt> 
+  "else" <else_then :MatchedStmt> =>Stmt::If(Box::new(If{cond, then, else_then:Some(else_then)})),
+  "while" "(" <cond:MulExp> ")" <block:MatchedStmt>=>Stmt::While(Box::new(While{cond,block})),
+  "break" ";" =>Stmt::Break,
+  "continue" ";" =>Stmt::Continue,
+  <exp: (MulExp)?> ";" => Stmt::Exp( <> ),
+  "for""(" <btype:BType> <id:Ident> "in" <array:MulExp> ")" <block:MatchedStmt> =>Stmt::Foreach(Box::new(Foreach{<>}))
+}
+
+RVal:RVal={
+  <id:Ident> <indices: ("[" <MulExp> "]")*> =>RVal{<>}
+}
+LVal:LVal={
+  <id:Ident> <indices: ("[" <(MulExp)?> "]")*> =>LVal{id}
+}
+
+ValValue:ValValue={
+  <exp:MulExp> => ValValue::Exp(<>),
+  "{" "}" => ValValue::List(Vec::new()),
+  "{" <init: ValValue> <mut inits: ("," <ValValue>)*> "}" => {
+    inits.insert(0, init);
+    ValValue::List(inits)
+  },
+}
+
+OpenStmt :Stmt={
+  "if" "(" <cond:MulExp> ")" <then:MatchedStmt> =>Stmt::If(Box::new(If { cond, then, else_then: None })),
+  "if" "(" <cond:MulExp> ")" <then:MatchedStmt> 
+  "else" <else_then:OpenStmt>  =>Stmt::If(Box::new(If { cond, then, else_then: Some(else_then) })),
+}
+
+BType:BType = {
+  "int"=> BType::Int,
+  "char"=> BType::Char,
+  "float"=> BType::Float,
+  "double"=> BType::Double,
+  "bool"=>BType::Bool,
+  "void"=> BType::Void
+}
+
+PrimaryExp:PrimaryExp={
+  <id:Ident> =>PrimaryExp::LVal(LVal{<>}),
+  // <rval:RVal> =>PrimaryExp::RVal(<>),
+  <num:Number> => PrimaryExp::Number(num), 
+  <id: Ident> "[" <arg:MulExp> <mut args:("][" <MulExp>)*> "]" =>{
+    args.insert(0,arg);
+    PrimaryExp::RVal(RVal { id, indices:args })
+  }, 
+}
+
+
+UnaryExp:UnaryExp= {
+
+  <id: Ident> "(" ")" => UnaryExp::Call(FuncCall { id, args: Vec::new() }),
+  <id: Ident> "(" <arg:MulExp> <mut args:("," <MulExp>)*> ")" =>{
+    args.insert(0,arg);
+    UnaryExp::Call(FuncCall { id, args })
+  }, 
+  <num:PrimaryExp>=>UnaryExp::Primary(<>),
+}
+
+MulExp:MulExp={
+  UnaryExp=>MulExp::Unary(<>),
+  <a: MulExp> <op:Op> <b: UnaryExp>  =>MulExp::MulUnary(Box::new(a),op,b),
+}
+
+Op:Op={
+  "+"=>Op::add,
+  "-"=>Op::sub,
+  "*"=>Op::mul,
+  "/"=>Op::div,
+  "||"=>Op::or ,
+  "&&"=>Op::and ,
+  ">" => Op::gt ,
+  ">="=> Op::ge ,
+  "<" => Op::lt ,
+  "<="=> Op::le ,
+  "=="=> Op::eq ,
+   "!=" =>Op::neq
+}
+
+
+
+Number: i32 = <num: IntConst> => <>;
+
+// 如果匹配到标识符, 就返回这个字符串
+// 一对尖括号在此处指代的是正则表达式匹配到的字符串 (&str)
+// 关于尖括号到底代表什么, 请 RTFM
+Ident: String = r"[_a-zA-Z][_a-zA-Z0-9]*" => <>.to_string();
+
+// 对整数字面量的处理方式: 把匹配到的字符串按对应进制转换成数字
+IntConst: i32 = {
+  r"[1-9][0-9]*" => i32::from_str_radix(<>, 10).unwrap(),
+  r"0[0-7]*" => i32::from_str_radix(<>, 8).unwrap(),
+  r"0[xX][0-9a-fA-F]+" => i32::from_str_radix(&<>[2..], 16).unwrap(),
+}

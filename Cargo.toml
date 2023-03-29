@@ -1,0 +1,21 @@
+[package]
+build = "build.rs"
+edition = "2021"
+name = "FireMonkey"
+version = "0.1.0"
+
+[profile.release]
+opt-level = 'z'
+lto = true
+codegen-units = 1
+panic = 'abort'
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+lalrpop-util = {version = "0.19.8", features = ["lexer"]}
+quickjspp = "0.1.0"
+
+[build-dependencies]
+lalrpop = "0.19.8"
+xxxx="1.0.0"
+
